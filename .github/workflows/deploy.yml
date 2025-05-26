@@ -1,4 +1,4 @@
-name: UAT to Production EC2 Deploy
+name: SSH-Controlled EC2 Deploy (User A/B)
 
 on:
   workflow_dispatch:
@@ -7,6 +7,13 @@ on:
         description: 'Git Tag (e.g., v1.0.0)'
         required: true
         type: string
+      target_user: # Input to select user A or B
+        description: 'Target User (A or B)'
+        required: true
+        type: choice
+        options:
+          - A
+          - B
 
 jobs:
   build-deploy-uat:
@@ -28,25 +35,26 @@ jobs:
           ls -l deploy_output/
 
       - name: Securely Copy UAT Files to Server
-        env:
-          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOSTNAME: ${{ secrets.UAT_EC2_HOST }}
+        env: # Dynamically select host and key based on input
+          SSH_KEY: ${{ github.event.inputs.target_user == 'A' && secrets.A_SSH_PRIVATE_KEY || secrets.B_SSH_PRIVATE_KEY }}
+          UAT_HOST: ${{ github.event.inputs.target_user == 'A' && secrets.A_UAT_EC2_HOST || secrets.B_UAT_EC2_HOST }}
           USER_NAME: ${{ secrets.EC2_USER }}
         run: |
           echo "--- Setting up SSH key and compressing files ---"
-          echo "$PRIVATE_KEY" > deploy_key.pem
-          chmod 600 deploy_key.pem
-          tar -czf app_deploy.tar.gz -C deploy_output .
+          echo "$SSH_KEY" > deploy_key.pem # Create temporary private key file
+          chmod 600 deploy_key.pem         # Set correct permissions
+          tar -czf app_deploy.tar.gz -C deploy_output . # Create tarball
           echo "--- Copying compressed files to EC2 /tmp/ ---"
-          scp -o StrictHostKeyChecking=no -i deploy_key.pem app_deploy.tar.gz ${USER_NAME}@${HOSTNAME}:/tmp/
+          scp -o StrictHostKeyChecking=no -i deploy_key.pem app_deploy.tar.gz ${USER_NAME}@${UAT_HOST}:/tmp/
           echo "--- Files copied to /tmp/app_deploy.tar.gz on EC2 ---"
 
       - name: Deploy and Restart Nginx on UAT-Server
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.UAT_EC2_HOST }}
+          # Dynamically select host and key based on input
+          host: ${{ github.event.inputs.target_user == 'A' && secrets.A_UAT_EC2_HOST || secrets.B_UAT_EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          key: ${{ github.event.inputs.target_user == 'A' && secrets.A_SSH_PRIVATE_KEY || secrets.B_SSH_PRIVATE_KEY }}
           script: |
             echo "--- Connecting to EC2 to deploy and restart Nginx ---"
             echo "Stopping Nginx..."
@@ -69,7 +77,7 @@ jobs:
   deploy-to-prod:
     needs: build-deploy-uat
     runs-on: ubuntu-latest
-    environment: Production
+    environment: Production # Links to the GitHub 'Production' Environment for approval
 
     steps:
       - name: Checkout Code
@@ -87,33 +95,34 @@ jobs:
           ls -l deploy_output/
 
       - name: Securely Copy Production Files to Server
-        env:
-          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOSTNAME: ${{ secrets.PROD_EC2_HOST }}
+        env: # Dynamically select host and key based on input
+          SSH_KEY: ${{ github.event.inputs.target_user == 'A' && secrets.A_SSH_PRIVATE_KEY || secrets.B_SSH_PRIVATE_KEY }}
+          PROD_HOST: ${{ github.event.inputs.target_user == 'A' && secrets.A_PROD_EC2_HOST || secrets.B_PROD_EC2_HOST }}
           USER_NAME: ${{ secrets.EC2_USER }}
         run: |
           echo "--- Setting up SSH key and compressing files ---"
-          echo "$PRIVATE_KEY" > deploy_key.pem
+          echo "$SSH_KEY" > deploy_key.pem
           chmod 600 deploy_key.pem
           tar -czf app_deploy.tar.gz -C deploy_output .
           echo "--- Copying compressed files to EC2 /tmp/ ---"
-          scp -o StrictHostKeyChecking=no -i deploy_key.pem app_deploy.tar.gz ${USER_NAME}@${HOSTNAME}:/tmp/
+          scp -o StrictHostKeyChecking=no -i deploy_key.pem app_deploy.tar.gz ${USER_NAME}@${PROD_HOST}:/tmp/
           echo "--- Files copied to /tmp/app_deploy.tar.gz on EC2 ---"
 
       - name: Deploy and Restart Nginx on Production-Server
-        uses: appleboy/ssh-action@v1.0.3 # CORRECT: Use the SSH action directly
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.PROD_EC2_HOST }}
+          # Dynamically select host and key based on input
+          host: ${{ github.event.inputs.target_user == 'A' && secrets.A_PROD_EC2_HOST || secrets.B_PROD_EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: | # CORRECT: Provide the script directly to the action
+          key: ${{ github.event.inputs.target_user == 'A' && secrets.A_SSH_PRIVATE_KEY || secrets.B_SSH_PRIVATE_KEY }}
+          script: |
             echo "--- Connecting to EC2 to deploy and restart Nginx ---"
             echo "Stopping Nginx..."
             sudo systemctl stop nginx
             echo "Clearing previous deployment at /var/www/html..."
-            sudo rm -rf /var/www/html/* # TARGET /var/www/html
+            sudo rm -rf /var/www/html/*
             echo "Extracting tarball to /var/www/html..."
-            sudo tar -xzf /tmp/app_deploy.tar.gz -C /var/www/html/ # TARGET /var/www/html
+            sudo tar -xzf /tmp/app_deploy.tar.gz -C /var/www/html/
             echo "Removing tarball from /tmp/..."
             sudo rm /tmp/app_deploy.tar.gz
             echo "Setting final permissions for Nginx read access..."
@@ -121,6 +130,6 @@ jobs:
             echo "Starting Nginx..."
             sudo systemctl start nginx
             echo "--- Deployment verification on EC2 Production ---"
-            ls -l /var/www/html/ # Debugging: Show what's now in the deployed directory
+            ls -l /var/www/html/
             echo "------------------------------------------------"
             echo "Production Deployment Complete!"
