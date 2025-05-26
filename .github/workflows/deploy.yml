@@ -1,109 +1,81 @@
-name: UAT to Production EC2 Deploy # Name visible in GitHub Actions
+name: UAT to Production EC2 Deploy
 
 on:
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+  workflow_dispatch:
     inputs:
-      release_tag: # Input for the Git tag
-        description: 'Git Tag (e.g., v1.0.0, release-20250522)'
+      release_tag:
+        description: 'Git Tag (e.g., v1.0.0)'
         required: true
         type: string
 
 jobs:
-  # Job 1: Build and Deploy to UAT EC2
   build-deploy-uat:
-    runs-on: ubuntu-latest # The type of virtual machine to run this job on
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Tag Clone - Checkout Code
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.release_tag }} # Get the specific tagged code
+          ref: ${{ github.event.inputs.release_tag }}
 
-      - name: Simulate Build/Prepare Files
-        # We'll just copy the necessary files to a deploy_output folder.
-        # In a real app, this would be npm run build, mvn package, etc.
+      - name: Prepare Files for UAT
         run: |
-          echo "Simulating build for UAT environment with tag '${{ github.event.inputs.release_tag }}'..."
           mkdir -p deploy_output
-          # Replace placeholders in index.html
           sed "s/REPLACE_ENV/UAT/g; s/REPLACE_TAG/${{ github.event.inputs.release_tag }}/g" index.html > deploy_output/index.html
           cp test.txt deploy_output/
-          echo "Files prepared for UAT deployment."
 
       - name: Deploy to UAT EC2
-        uses: appleboy/ssh-action@v1.0.3 # GitHub Action to deploy via SSH
+        uses: appleboy/scp-action@v0.1.1
         with:
           host: ${{ secrets.UAT_EC2_HOST }}
-          username: ${{ secrets.EC2_USER }} # This will be 'ubuntu'
+          username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            echo "Stopping Nginx on UAT EC2..."
-            sudo systemctl stop nginx # Stop web server
-            echo "Clearing previous deployment on UAT EC2..."
-            sudo rm -rf /var/www/my-app/* # Clear old files
-            echo "Creating app directory on UAT EC2 if not exists..."
-            sudo mkdir -p /var/www/my-app # Ensure directory exists
-            echo "Copying files to UAT EC2 /var/www/my-app/..."
-            # The actual copy is handled by 'source' and 'target' below
-          source: "./deploy_output/" # Source folder on the GitHub Actions runner
-          target: "/var/www/my-app/" # Destination folder on your EC2 instance
+          source: "deploy_output/*"
+          target: "/var/www/my-app/"
 
-      - name: Start Nginx on UAT EC2
+      - name: Restart Nginx on UAT EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.UAT_EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            echo "Starting Nginx on UAT EC2..."
-            sudo systemctl start nginx # Start web server
-            echo "Deployment to UAT EC2 successful!"
+            sudo systemctl restart nginx
 
-  # Job 2: Deploy to Production EC2 (Requires Approval)
   deploy-to-prod:
-    needs: build-deploy-uat # This job runs ONLY after the UAT job finishes successfully
+    needs: build-deploy-uat
     runs-on: ubuntu-latest
-    environment: Production # Links to the GitHub 'Production' Environment for approval
+    environment:
+      name: Production
+      url: http://${{ secrets.PROD_EC2_HOST }}
 
     steps:
-      - name: Tag Clone - Checkout Code (for Prod - ensures consistent version)
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.release_tag }}
 
-      - name: Simulate Build/Prepare Files (for Prod)
-        # Re-build/prepare for Production. In advanced setups, artifacts from UAT job would be passed.
+      - name: Prepare Files for Production
         run: |
-          echo "Simulating build for Production environment with tag '${{ github.event.inputs.release_tag }}'..."
           mkdir -p deploy_output
-          # Replace placeholders in index.html
           sed "s/REPLACE_ENV/Production/g; s/REPLACE_TAG/${{ github.event.inputs.release_tag }}/g" index.html > deploy_output/index.html
           cp test.txt deploy_output/
-          echo "Files prepared for Production deployment."
 
       - name: Deploy to Production EC2
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/scp-action@v0.1.1
         with:
           host: ${{ secrets.PROD_EC2_HOST }}
-          username: ${{ secrets.EC2_USER }} # This will be 'ubuntu'
+          username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            echo "Stopping Nginx on Production EC2..."
-            sudo systemctl stop nginx
-            echo "Clearing previous deployment on Production EC2..."
-            sudo rm -rf /var/www/my-app/*
-            sudo mkdir -p /var/www/my-app
-            echo "Copying files to Production EC2 /var/www/my-app/..."
-          source: "./deploy_output/"
+          source: "deploy_output/*"
           target: "/var/www/my-app/"
 
-      - name: Start Nginx on Production EC2
+      - name: Restart Nginx on Production EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_EC2_HOST }}
-          username: ${{ secrets.EC2_USER }} # This will be 'ubuntu'
+          username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            echo "Starting Nginx on Production EC2..."
-            sudo systemctl start nginx
-            echo "Deployment to Production successful!"
+            sudo systemctl restart nginx
+
