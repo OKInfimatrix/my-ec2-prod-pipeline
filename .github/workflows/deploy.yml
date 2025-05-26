@@ -20,33 +20,57 @@ jobs:
 
       - name: Prepare Files for UAT
         run: |
+          echo "Preparing files for UAT environment..."
           mkdir -p deploy_output
           sed "s/REPLACE_ENV/UAT/g; s/REPLACE_TAG/${{ github.event.inputs.release_tag }}/g" index.html > deploy_output/index.html
           cp test.txt deploy_output/
+          echo "Source files prepared for UAT deployment:"
+          ls -l deploy_output/
 
-      - name: Deploy to UAT EC2
-        uses: appleboy/scp-action@v0.1.1
-        with:
-          host: ${{ secrets.UAT_EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "deploy_output/*"
-          target: "/var/www/my-app/"
+      - name: Securely Copy UAT Files to Server
+        env:
+          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTNAME: ${{ secrets.UAT_EC2_HOST }}
+          USER_NAME: ${{ secrets.EC2_USER }}
+        run: |
+          echo "--- Setting up SSH key and compressing files ---"
+          echo "$PRIVATE_KEY" > deploy_key.pem
+          chmod 600 deploy_key.pem
+          tar -czf app_deploy.tar.gz -C deploy_output .
+          echo "--- Copying compressed files to EC2 /tmp/ ---"
+          scp -o StrictHostKeyChecking=no -i deploy_key.pem app_deploy.tar.gz ${USER_NAME}@${HOSTNAME}:/tmp/
+          echo "--- Files copied to /tmp/app_deploy.tar.gz on EC2 ---"
 
-      - name: Restart Nginx on UAT EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.UAT_EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            sudo systemctl restart nginx
+      - name: Deploy and Restart Nginx on UAT-Server
+        env:
+          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTNAME: ${{ secrets.UAT_EC2_HOST }}
+          USER_NAME: ${{ secrets.EC2_USER }}
+        run: |
+          echo "--- Connecting to EC2 to deploy and restart Nginx ---"
+          ssh -o StrictHostKeyChecking=no -i deploy_key.pem ${USER_NAME}@${HOSTNAME} '
+            echo "Stopping Nginx..."
+            sudo systemctl stop nginx
+            echo "Clearing previous deployment at /var/www/html..."
+            sudo rm -rf /var/www/html/* # TARGET /var/www/html
+            echo "Extracting tarball to /var/www/html..."
+            sudo tar -xzf /tmp/app_deploy.tar.gz -C /var/www/html/ # TARGET /var/www/html
+            echo "Removing tarball from /tmp/..."
+            sudo rm /tmp/app_deploy.tar.gz
+            echo "Setting final permissions for Nginx read access..."
+            sudo chmod -R 755 /var/www/html # Ensure Nginx (www-data) can read
+            echo "Starting Nginx..."
+            sudo systemctl start nginx
+            echo "--- Deployment verification on EC2 UAT ---"
+            ls -l /var/www/html/ # Debugging: Show what's now in the deployed directory
+            echo "------------------------------------------"
+            echo "UAT Deployment Complete!"
+          '
 
   deploy-to-prod:
     needs: build-deploy-uat
     runs-on: ubuntu-latest
-    environment:
-      name: Production
+    environment: Production
 
     steps:
       - name: Checkout Code
@@ -56,25 +80,49 @@ jobs:
 
       - name: Prepare Files for Production
         run: |
+          echo "Preparing files for Production environment..."
           mkdir -p deploy_output
           sed "s/REPLACE_ENV/Production/g; s/REPLACE_TAG/${{ github.event.inputs.release_tag }}/g" index.html > deploy_output/index.html
           cp test.txt deploy_output/
+          echo "Source files prepared for Production deployment:"
+          ls -l deploy_output/
 
-      - name: Deploy to Production EC2
-        uses: appleboy/scp-action@v0.1.1
-        with:
-          host: ${{ secrets.PROD_EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "deploy_output/*"
-          target: "/var/www/my-app/"
+      - name: Securely Copy Production Files to Server
+        env:
+          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTNAME: ${{ secrets.PROD_EC2_HOST }}
+          USER_NAME: ${{ secrets.EC2_USER }}
+        run: |
+          echo "--- Setting up SSH key and compressing files ---"
+          echo "$PRIVATE_KEY" > deploy_key.pem
+          chmod 600 deploy_key.pem
+          tar -czf app_deploy.tar.gz -C deploy_output .
+          echo "--- Copying compressed files to EC2 /tmp/ ---"
+          scp -o StrictHostKeyChecking=no -i deploy_key.pem app_deploy.tar.gz ${USER_NAME}@${HOSTNAME}:/tmp/
+          echo "--- Files copied to /tmp/app_deploy.tar.gz on EC2 ---"
 
-      - name: Restart Nginx on Production EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            sudo systemctl restart nginx
-
+      - name: Deploy and Restart Nginx on Production-Server
+        env:
+          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTNAME: ${{ secrets.PROD_EC2_HOST }}
+          USER_NAME: ${{ secrets.EC2_USER }}
+        run: |
+          echo "--- Connecting to EC2 to deploy and restart Nginx ---"
+          ssh -o StrictHostKeyChecking=no -i deploy_key.pem ${USER_NAME}@${HOSTNAME} '
+            echo "Stopping Nginx..."
+            sudo systemctl stop nginx
+            echo "Clearing previous deployment at /var/www/html..."
+            sudo rm -rf /var/www/html/* # TARGET /var/www/html
+            echo "Extracting tarball to /var/www/html..."
+            sudo tar -xzf /tmp/app_deploy.tar.gz -C /var/www/html/ # TARGET /var/www/html
+            echo "Removing tarball from /tmp/..."
+            sudo rm /tmp/app_deploy.tar.gz
+            echo "Setting final permissions for Nginx read access..."
+            sudo chmod -R 755 /var/www/html
+            echo "Starting Nginx..."
+            sudo systemctl start nginx
+            echo "--- Deployment verification on EC2 Production ---"
+            ls -l /var/www/html/ # Debugging: Show what's now in the deployed directory
+            echo "------------------------------------------------"
+            echo "Production Deployment Complete!"
+          '
