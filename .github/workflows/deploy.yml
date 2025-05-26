@@ -7,7 +7,7 @@ on:
         description: 'Git Tag (e.g., v1.0.0)'
         required: true
         type: string
-      target_user: # Input to select user A or B
+      target_user: 
         description: 'Target User (A or B)'
         required: true
         type: choice
@@ -31,53 +31,39 @@ jobs:
           mkdir -p deploy_output
           sed "s/REPLACE_ENV/UAT/g; s/REPLACE_TAG/${{ github.event.inputs.release_tag }}/g" index.html > deploy_output/index.html
           cp test.txt deploy_output/
-          echo "Source files prepared for UAT deployment:"
           ls -l deploy_output/
 
       - name: Securely Copy UAT Files to Server
-        env: # Dynamically select host and key based on input
+        env:
           SSH_KEY: ${{ github.event.inputs.target_user == 'A' && secrets.A_SSH_PRIVATE_KEY || secrets.B_SSH_PRIVATE_KEY }}
           UAT_HOST: ${{ github.event.inputs.target_user == 'A' && secrets.A_UAT_EC2_HOST || secrets.B_UAT_EC2_HOST }}
           USER_NAME: ${{ secrets.EC2_USER }}
         run: |
-          echo "--- Setting up SSH key and compressing files ---"
-          echo "$SSH_KEY" > deploy_key.pem # Create temporary private key file
-          chmod 600 deploy_key.pem         # Set correct permissions
-          tar -czf app_deploy.tar.gz -C deploy_output . # Create tarball
-          echo "--- Copying compressed files to EC2 /tmp/ ---"
+          echo "$SSH_KEY" > deploy_key.pem
+          chmod 600 deploy_key.pem
+          tar -czf app_deploy.tar.gz -C deploy_output .
           scp -o StrictHostKeyChecking=no -i deploy_key.pem app_deploy.tar.gz ${USER_NAME}@${UAT_HOST}:/tmp/
-          echo "--- Files copied to /tmp/app_deploy.tar.gz on EC2 ---"
 
       - name: Deploy and Restart Nginx on UAT-Server
         uses: appleboy/ssh-action@v1.0.3
         with:
-          # Dynamically select host and key based on input
           host: ${{ github.event.inputs.target_user == 'A' && secrets.A_UAT_EC2_HOST || secrets.B_UAT_EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ github.event.inputs.target_user == 'A' && secrets.A_SSH_PRIVATE_KEY || secrets.B_SSH_PRIVATE_KEY }}
           script: |
-            echo "--- Connecting to EC2 to deploy and restart Nginx ---"
-            echo "Stopping Nginx..."
             sudo systemctl stop nginx
-            echo "Clearing previous deployment at /var/www/html..."
             sudo rm -rf /var/www/html/*
-            echo "Extracting tarball to /var/www/html..."
             sudo tar -xzf /tmp/app_deploy.tar.gz -C /var/www/html/
-            echo "Removing tarball from /tmp/..."
             sudo rm /tmp/app_deploy.tar.gz
-            echo "Setting final permissions for Nginx read access..."
             sudo chmod -R 755 /var/www/html
-            echo "Starting Nginx..."
             sudo systemctl start nginx
-            echo "--- Deployment verification on EC2 UAT ---"
             ls -l /var/www/html/
-            echo "------------------------------------------"
             echo "UAT Deployment Complete!"
 
   deploy-to-prod:
     needs: build-deploy-uat
     runs-on: ubuntu-latest
-    environment: Production # Links to the GitHub 'Production' Environment for approval
+    environment: Production
 
     steps:
       - name: Checkout Code
@@ -95,41 +81,28 @@ jobs:
           ls -l deploy_output/
 
       - name: Securely Copy Production Files to Server
-        env: # Dynamically select host and key based on input
+        env:
           SSH_KEY: ${{ github.event.inputs.target_user == 'A' && secrets.A_SSH_PRIVATE_KEY || secrets.B_SSH_PRIVATE_KEY }}
           PROD_HOST: ${{ github.event.inputs.target_user == 'A' && secrets.A_PROD_EC2_HOST || secrets.B_PROD_EC2_HOST }}
           USER_NAME: ${{ secrets.EC2_USER }}
         run: |
-          echo "--- Setting up SSH key and compressing files ---"
           echo "$SSH_KEY" > deploy_key.pem
           chmod 600 deploy_key.pem
           tar -czf app_deploy.tar.gz -C deploy_output .
-          echo "--- Copying compressed files to EC2 /tmp/ ---"
           scp -o StrictHostKeyChecking=no -i deploy_key.pem app_deploy.tar.gz ${USER_NAME}@${PROD_HOST}:/tmp/
-          echo "--- Files copied to /tmp/app_deploy.tar.gz on EC2 ---"
 
       - name: Deploy and Restart Nginx on Production-Server
         uses: appleboy/ssh-action@v1.0.3
         with:
-          # Dynamically select host and key based on input
           host: ${{ github.event.inputs.target_user == 'A' && secrets.A_PROD_EC2_HOST || secrets.B_PROD_EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ github.event.inputs.target_user == 'A' && secrets.A_SSH_PRIVATE_KEY || secrets.B_SSH_PRIVATE_KEY }}
           script: |
-            echo "--- Connecting to EC2 to deploy and restart Nginx ---"
-            echo "Stopping Nginx..."
             sudo systemctl stop nginx
-            echo "Clearing previous deployment at /var/www/html..."
             sudo rm -rf /var/www/html/*
-            echo "Extracting tarball to /var/www/html..."
             sudo tar -xzf /tmp/app_deploy.tar.gz -C /var/www/html/
-            echo "Removing tarball from /tmp/..."
             sudo rm /tmp/app_deploy.tar.gz
-            echo "Setting final permissions for Nginx read access..."
             sudo chmod -R 755 /var/www/html
-            echo "Starting Nginx..."
             sudo systemctl start nginx
-            echo "--- Deployment verification on EC2 Production ---"
             ls -l /var/www/html/
-            echo "------------------------------------------------"
             echo "Production Deployment Complete!"
