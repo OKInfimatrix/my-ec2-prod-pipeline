@@ -42,13 +42,13 @@ jobs:
           echo "--- Files copied to /tmp/app_deploy.tar.gz on EC2 ---"
 
       - name: Deploy and Restart Nginx on UAT-Server
-        env:
-          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOSTNAME: ${{ secrets.UAT_EC2_HOST }}
-          USER_NAME: ${{ secrets.EC2_USER }}
-        run: |
-          echo "--- Connecting to EC2 to deploy and restart Nginx ---"
-          ssh -o StrictHostKeyChecking=no -i deploy_key.pem ${USER_NAME}@${HOSTNAME} '
+        uses: appleboy/ssh-action@v1.0.3 # CORRECT: Use the SSH action directly
+        with:
+          host: ${{ secrets.UAT_EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: | # CORRECT: Provide the script directly to the action
+            echo "--- Connecting to EC2 to deploy and restart Nginx ---"
             echo "Stopping Nginx..."
             sudo systemctl stop nginx
             echo "Clearing previous deployment at /var/www/html..."
@@ -65,7 +65,6 @@ jobs:
             ls -l /var/www/html/ # Debugging: Show what's now in the deployed directory
             echo "------------------------------------------"
             echo "UAT Deployment Complete!"
-          '
 
   deploy-to-prod:
     needs: build-deploy-uat
@@ -102,13 +101,13 @@ jobs:
           echo "--- Files copied to /tmp/app_deploy.tar.gz on EC2 ---"
 
       - name: Deploy and Restart Nginx on Production-Server
-        env:
-          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOSTNAME: ${{ secrets.PROD_EC2_HOST }}
-          USER_NAME: ${{ secrets.EC2_USER }}
-        run: |
-          echo "--- Connecting to EC2 to deploy and restart Nginx ---"
-          ssh -o StrictHostKeyChecking=no -i deploy_key.pem ${USER_NAME}@${HOSTNAME} '
+        uses: appleboy/ssh-action@v1.0.3 # CORRECT: Use the SSH action directly
+        with:
+          host: ${{ secrets.PROD_EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: | # CORRECT: Provide the script directly to the action
+            echo "--- Connecting to EC2 to deploy and restart Nginx ---"
             echo "Stopping Nginx..."
             sudo systemctl stop nginx
             echo "Clearing previous deployment at /var/www/html..."
@@ -125,4 +124,3 @@ jobs:
             ls -l /var/www/html/ # Debugging: Show what's now in the deployed directory
             echo "------------------------------------------------"
             echo "Production Deployment Complete!"
-          '
